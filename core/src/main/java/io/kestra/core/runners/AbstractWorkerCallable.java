@@ -26,6 +26,9 @@ public abstract class AbstractWorkerCallable implements Callable<State.Type> {
     String type;
 
     @Getter
+    String uid;
+
+    @Getter
     Throwable exception;
 
     private final CountDownLatch shutdownLatch = new CountDownLatch(1);
@@ -34,10 +37,11 @@ public abstract class AbstractWorkerCallable implements Callable<State.Type> {
 
     private Thread currentThread;
 
-    AbstractWorkerCallable(RunContext runContext, String type, ClassLoader classLoader) {
+    AbstractWorkerCallable(RunContext runContext, String type, String uid, ClassLoader classLoader) {
         this.logger = runContext.logger();
         this.runContext = runContext;
         this.type = type;
+        this.uid = uid;
         this.classLoader = classLoader;
     }
 

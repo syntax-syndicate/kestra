@@ -10,6 +10,7 @@ import io.kestra.core.exceptions.IllegalVariableEvaluationException;
 import io.kestra.core.metrics.MetricRegistry;
 import io.kestra.core.models.Label;
 import io.kestra.core.models.executions.*;
+import io.kestra.core.models.flows.State;
 import io.kestra.core.models.tasks.RunnableTask;
 import io.kestra.core.models.tasks.Task;
 import io.kestra.core.models.triggers.*;
@@ -19,12 +20,21 @@ import io.kestra.core.server.*;
 import io.kestra.core.services.LabelService;
 import io.kestra.core.services.LogService;
 import io.kestra.core.services.WorkerGroupService;
+import io.kestra.core.trace.RunContextTextMapGetter;
+import io.kestra.core.trace.TraceService;
+import io.kestra.core.trace.TraceUtils;
 import io.kestra.core.utils.*;
 import io.kestra.plugin.core.flow.WorkingDirectory;
 import io.micronaut.context.annotation.Parameter;
 import io.micronaut.context.event.ApplicationEventPublisher;
 import io.micronaut.core.annotation.Introspected;
 import io.micronaut.core.annotation.Nullable;
+import io.opentelemetry.api.OpenTelemetry;
+import io.opentelemetry.api.common.Attributes;
+import io.opentelemetry.api.trace.StatusCode;
+import io.opentelemetry.api.trace.Tracer;
+import io.opentelemetry.context.Context;
+import io.opentelemetry.context.Scope;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.inject.Inject;
@@ -108,6 +118,9 @@ public class Worker implements Service, Runnable, AutoCloseable {
 
     @Inject
     private WorkerSecurityService workerSecurityService;
+
+    @Inject
+    private TraceService traceService;
 
     private final Set<String> killedExecution = ConcurrentHashMap.newKeySet();
 
@@ -818,8 +831,20 @@ public class Worker implements Service, Runnable, AutoCloseable {
             workerCallableReferences.add(workerJobCallable);
         }
 
+        // TODO is the name of the span the good one? should we instead use tenant_namespace_flow_task?
+        // TODO should we create a span for trigger evaluation (it is already)?
+        // TODO taskId or triggerId
+        // TODO executionId
         try {
-            return workerSecurityService.callInSecurityContext(workerJobCallable);
+            return traceService.inTraceContext(
+                workerJobCallable.runContext,
+                "WORKER - " + workerJobCallable.getType(),
+                Attributes.of(TraceUtils.ATTR_UID, workerJobCallable.getUid()),
+                () -> workerSecurityService.callInSecurityContext(workerJobCallable)
+            );
+        } catch(Exception e) {
+            // should only occur if it fails in the tracing code which should be unexpected
+            return State.Type.FAILED;
         } finally {
             synchronized (this) {
                 workerCallableReferences.remove(workerJobCallable);
